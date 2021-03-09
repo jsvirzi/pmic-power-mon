@@ -104,6 +104,7 @@ uint32_t calibrate_adc(ADC_TypeDef *adc)
 {
 	adc->CR &= ~(ADC_CR_DEEPPWD);
 	adc->CR |= (ADC_CR_ADVREGEN);
+	HAL_Delay(250);
 	adc->CR &= ~(ADC_CR_ADEN);
 	adc->CR &= ~(ADC_CR_ADCALDIF);
 	adc->CR |= (ADC_CR_ADCAL);
@@ -113,14 +114,65 @@ uint32_t calibrate_adc(ADC_TypeDef *adc)
 }
 
 enum {
-	VoltageReading33 = 0,
-	VoltageReading18,
+	VoltageReading08 = 0,
 	VoltageReading11,
-	VoltageReading08,
+	VoltageReading18,
+	VoltageReading33,
 	VoltageReadings
 };
 
-uint32_t voltage[VoltageReadings];
+unsigned int voltage[VoltageReadings];
+/* 1820 = 0.8V. choose 1600 as threshold for 0.8V
+ * 2503 = 1.1V. choose 2200 as threshold for 1.1V
+ * 4095 = 1.8V. choose 3800 as threshold for 1.8V
+ * 3754 = 1.65V = 3.3V / 2. choose 3500 as threshold. (Voltage is divided by 2 because reference voltage = 1.8V)
+ */
+const unsigned int voltage_thresh[VoltageReadings] = { 1820, 2200, 3800, 3500};
+
+/* reads the adc data register, while the current source is selected,
+ * then submits a request for the next reading. after waiting for
+ * sufficient time, it's guaranteed the data will be ready. rinse and repeat.
+ */
+void read_and_submit_adc()
+{
+	static unsigned int voltage_phase = 0;
+	switch (voltage_phase)
+	{
+	case VoltageReading33:
+		voltage[VoltageReading33] = ADC1->DR;
+		/* set up reading next channel 0.8V */
+		ADC1->SQR1 = (2 << ADC_SQR1_SQ1_Pos);
+		ADC1->CR |= ADC_CR_ADSTART;
+		voltage_phase = VoltageReading08;
+		break;
+	case VoltageReading18:
+		voltage[VoltageReading18] = ADC2->DR;
+		/* set up reading next channel 3.3V */
+		ADC1->SQR1 = (10 << ADC_SQR1_SQ1_Pos);
+		ADC1->CR |= ADC_CR_ADSTART;
+		voltage_phase = VoltageReading33;
+		break;
+	case VoltageReading11:
+		voltage[VoltageReading11] = ADC1->DR;
+		/* set up reading next channel 1.8V */
+		ADC2->SQR1 = (17 << ADC_SQR1_SQ1_Pos);
+		ADC2->CR |= ADC_CR_ADSTART;
+		voltage_phase = VoltageReading18;
+		break;
+	case VoltageReading08:
+		voltage[VoltageReading08] = ADC1->DR;
+		/* set up reading next channel 1.1V */
+		ADC1->SQR1 = (1 << ADC_SQR1_SQ1_Pos);
+		ADC1->CR |= ADC_CR_ADSTART;
+		voltage_phase = VoltageReading11;
+		break;
+
+	default: /* state machine, you glitched. reset thyself! */
+		voltage_phase = VoltageReading08;
+		break;
+	}
+}
+
 uint32_t adc1_cal_fact, adc2_cal_fact;
 
 /* USER CODE END PFP */
@@ -168,16 +220,12 @@ int main(void)
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_Delay(1000);
+  HAL_Delay(1000); /* delay after bringing up ADC VREF */
   adc1_cal_fact = calibrate_adc(ADC1);
   adc2_cal_fact = calibrate_adc(ADC2);
 
-  ADC_TypeDef *adc;
-  adc = ADC1;
-  adc->CR &= ~(ADC_CR_ADEN);
-
-  adc = ADC2;
-  adc->CR &= ~(ADC_CR_ADEN);
+  ADC1->CR |= (ADC_CR_ADEN);
+  ADC2->CR |= (ADC_CR_ADEN);
 
   /* USER CODE END 2 */
 
@@ -212,8 +260,14 @@ int main(void)
 	  reading_counter += loop_delay_ms;
 	  if (reading_counter >= reading_threshold) {
 		  reading_counter = 0;
+		  read_and_submit_voltage();
 		  snprintf(voltage_reading_buffer, sizeof(voltage_reading_buffer),
-            "voltage: %ldmV %ldmV %ldmV %ldmV\n", voltage[0], voltage[1], voltage[2], voltage[3]);
+            "voltage: %dmV %dmV %dmV %dmV\n", voltage[0], voltage[1], voltage[2], voltage[3]);
+	  }
+
+	  unsigned int voltage_stable = 0;
+	  for (int i = 0; i < VoltageReadings; ++i) {
+		  voltage_stable = voltage_stable & ((voltage[i] >= voltage_thresh[i]) ? (1 << i) : 0);
 	  }
 
 	  status = (CORE_PWR_GOOD_GPIO_Port->IDR & CORE_PWR_GOOD_Pin);
@@ -379,6 +433,11 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
+
+  ADC_TypeDef *adc = ADC1;
+  adc->CR &= ~(ADC_CR_ADEN); /* explicitly disable */
+  adc->CFGR &= ~(ADC_CFGR_CONT);
+  adc->CR |= ADC_CCR_VREFEN;
 
   /* USER CODE END ADC1_Init 2 */
 
