@@ -220,7 +220,7 @@ int main(void)
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_Delay(1000); /* delay after bringing up ADC VREF */
+//  HAL_Delay(1000); /* delay after bringing up ADC VREF */
   adc1_cal_fact = calibrate_adc(ADC1);
   adc2_cal_fact = calibrate_adc(ADC2);
 
@@ -260,7 +260,7 @@ int main(void)
 	  reading_counter += loop_delay_ms;
 	  if (reading_counter >= reading_threshold) {
 		  reading_counter = 0;
-		  read_and_submit_voltage();
+		  read_and_submit_adc();
 		  snprintf(voltage_reading_buffer, sizeof(voltage_reading_buffer),
             "voltage: %dmV %dmV %dmV %dmV\n", voltage[0], voltage[1], voltage[2], voltage[3]);
 	  }
@@ -326,7 +326,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
@@ -337,7 +337,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
-  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLN = 75;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
   RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
@@ -497,7 +497,9 @@ static void MX_ADC2_Init(void)
   /* USER CODE BEGIN ADC2_Init 2 */
 
   ADC_TypeDef *adc = ADC2;
-  adc->CR |= (ADC_CR_ADEN);
+  adc->CR &= ~(ADC_CR_ADEN); /* explicitly disable */
+  adc->CFGR &= ~(ADC_CFGR_CONT);
+  adc->CR |= ADC_CCR_VREFEN;
 
   /* USER CODE END ADC2_Init 2 */
 
@@ -519,7 +521,7 @@ static void MX_I2C2_Init(void)
 
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
-  hi2c2.Init.Timing = 0x30A0A7FB;
+  hi2c2.Init.Timing = 0x20C0EDFF;
   hi2c2.Init.OwnAddress1 = 0;
   hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -741,12 +743,8 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOF_CLK_ENABLE();
-  __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_10, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, SOC_POR_Pin|PWR3_ENA1_Pin|PWR3_ENA2_Pin|PWR3_ENA3_Pin
@@ -754,13 +752,6 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(PWR3_ENA_GPIO_Port, PWR3_ENA_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : PG10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
   /*Configure GPIO pin : WD_TRIGGER_Pin */
   GPIO_InitStruct.Pin = WD_TRIGGER_Pin;
