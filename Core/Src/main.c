@@ -79,6 +79,7 @@ char voltage_reading_buffer[128];
 
 enum {
 	StateIdle = 0,
+	WaitStatePwrStage3,
 	StatePwrStage3,
 	StateSocReset,
 	States
@@ -127,7 +128,7 @@ unsigned int voltage[VoltageReadings];
  * 4095 = 1.8V. choose 3800 as threshold for 1.8V
  * 3754 = 1.65V = 3.3V / 2. choose 3500 as threshold. (Voltage is divided by 2 because reference voltage = 1.8V)
  */
-const unsigned int voltage_thresh[VoltageReadings] = { 1820, 2200, 3800, 3500};
+const unsigned int voltage_thresh[VoltageReadings] = { 1600, 2200, 0 * 3800, 0 * 3500};
 
 /* reads the adc data register, while the current source is selected,
  * then submits a request for the next reading. after waiting for
@@ -220,6 +221,8 @@ int main(void)
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
 
+  LED_GPIO_Port->BSRR = (LED_Pin << (1 * 16));
+
 //  HAL_Delay(1000); /* delay after bringing up ADC VREF */
   adc1_cal_fact = calibrate_adc(ADC1);
   adc2_cal_fact = calibrate_adc(ADC2);
@@ -231,7 +234,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  volatile uint32_t status;
+  volatile uint32_t core_power_status;
 //  uint32_t soc_reset_counter = 0; /* default is still in reset */
 //  uint32_t pwr_stage3_counter = 0;
   uint32_t state_counter = 0;
@@ -239,6 +242,7 @@ int main(void)
   uint32_t reading_counter = 0;
   const uint32_t loop_delay_ms = 10;
   const uint32_t soc_reset_threshold = 150;
+  const uint32_t wait_pwr_stage3_threshold = 250;
   const uint32_t pwr_stage3_threshold = 150;
   const uint32_t watchdog_threshold = 150;
   const uint32_t reading_threshold = 1000;
@@ -265,40 +269,69 @@ int main(void)
             "voltage: %dmV %dmV %dmV %dmV\n", voltage[0], voltage[1], voltage[2], voltage[3]);
 	  }
 
-	  unsigned int voltage_stable = 0;
+	  unsigned int voltage_stable = 1;
 	  for (int i = 0; i < VoltageReadings; ++i) {
-		  voltage_stable = voltage_stable & ((voltage[i] >= voltage_thresh[i]) ? (1 << i) : 0);
+		  voltage_stable = voltage_stable & ((voltage[i] >= voltage_thresh[i]) ? 1 : 0);
 	  }
 
-	  status = (CORE_PWR_GOOD_GPIO_Port->IDR & CORE_PWR_GOOD_Pin);
+	  core_power_status = (CORE_PWR_GOOD_GPIO_Port->IDR & CORE_PWR_GOOD_Pin);
+#if 0
 	  if (status == 0) { /* if CORE_PWR_GOOD goes low, reset the whole thing and start again */
         pwr_stage3_remove();
         soc_reset_assert();
         state = StateIdle;
         state_counter = 0;
+	  } else if ((voltage_stable == 0) && (state = StateSocReset)) {
 	  }
+#endif
+
+	  /* TODO not handled. what if power goes out during operation? */
 
 	  switch (state) {
 
 	  case StateIdle: {
-		  if (status) {
+		  if (core_power_status) {
             state_counter += loop_delay_ms;
 			if (state_counter >= pwr_stage3_threshold) {
 			  pwr_stage3_assert();
-			  state = StatePwrStage3;
+			  state = WaitStatePwrStage3;
 			  state_counter = 0;
 			}
+		  } else {
+            pwr_stage3_remove();
+            soc_reset_assert();
+            state_counter = 0; /* go back to beginning of same state */
+		  }}
+		  break;
+
+	  case WaitStatePwrStage3: {
+		  if (core_power_status && voltage_stable) {
+			  state_counter += loop_delay_ms;
+				if (state_counter >= wait_pwr_stage3_threshold) {
+				  state = StatePwrStage3;
+				  state_counter = 0;
+				}
+		  } else if (core_power_status == 0) {
+              state = StateIdle;
+              state_counter = 0;
 		  }}
 		  break;
 
 	  case StatePwrStage3: {
-		  if (status) {
+		  if (core_power_status) {
 			state_counter += loop_delay_ms;
 			if (state_counter >= soc_reset_threshold) {
               soc_reset_remove();
 			  state = StateSocReset;
 			}
 		  }}
+		  break;
+
+	  case StateSocReset:
+		  if ((core_power_status == 0) || (voltage_stable == 0))
+		  {
+			  /* TODO handle error condition */
+		  }
 		  break;
 
 	  default: {
